@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#17324d">
+<link rel="manifest" href="manifest.webmanifest">
+<title>나의 법령집</title>
+<style>
+:root{--navy:#17324d;--bg:#f5f7fa;--card:#fff;--line:#d9e0e7;--text:#17212b;--muted:#607080;--danger:#b42318}
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;background:var(--bg);color:var(--text)}
+button,input{font:inherit}.top{height:58px;background:var(--navy);color:#fff;display:flex;align-items:center;gap:8px;padding:8px 12px;position:sticky;top:0;z-index:10}
+.top h1{font-size:18px;margin:0;flex:1}.btn{border:1px solid var(--line);background:#fff;border-radius:10px;padding:9px 12px;min-height:40px;cursor:pointer}
+.btn.primary{background:var(--navy);color:#fff;border-color:var(--navy)}.btn.danger{color:var(--danger)}.btn.icon{padding:7px 10px}
+.wrap{max-width:1050px;margin:0 auto;padding:16px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;min-height:154px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;position:relative}
+.lawIcon{width:64px;height:76px;border-radius:10px;background:var(--navy);color:#fff;display:grid;place-items:center;font-weight:800;font-size:28px;box-shadow:inset 0 0 0 2px rgba(255,255,255,.12)}
+.name{font-weight:700;text-align:center;line-height:1.3}.cardActions{display:flex;gap:6px}.cardActions .btn{font-size:13px;min-height:34px;padding:6px 8px}
+#viewerScreen{display:none}.viewerbar{display:flex;gap:7px;align-items:center;flex-wrap:wrap}.viewerbar input{flex:1;min-width:150px;height:40px;border:1px solid var(--line);border-radius:10px;padding:0 10px}
+#pdfWrap{background:#cfd5dc;min-height:calc(100vh - 58px);padding:10px;overflow:auto}.page{background:#fff;margin:0 auto 12px;box-shadow:0 2px 10px rgba(0,0,0,.16);position:relative}.page canvas{display:block;width:100%;height:auto}.textLayer{position:absolute;inset:0;overflow:hidden;opacity:.22;line-height:1}.textLayer span{color:transparent;position:absolute;white-space:pre;transform-origin:0 0}.textLayer .hit{background:#ffe66d;color:transparent;border-radius:2px}.textLayer .current{background:#ff9f43}
+.empty{padding:40px 10px;text-align:center;color:var(--muted)}
+dialog{border:0;border-radius:16px;padding:0;max-width:420px;width:calc(100% - 28px)}dialog::backdrop{background:rgba(0,0,0,.35)}.dlg{padding:18px}.dlg h2{margin:0 0 14px;font-size:20px}.dlg label{display:block;font-size:13px;color:var(--muted);margin:10px 0 5px}.dlg input{width:100%;height:44px;border:1px solid var(--line);border-radius:10px;padding:0 10px}.dlgBtns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+.status{font-size:12px;color:#dbe6f0;min-width:54px;text-align:center}
+@media(max-width:560px){.wrap{padding:12px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.top{height:auto;min-height:58px}.viewerbar{width:100%}.viewerbar input{order:5;flex-basis:100%}}
+</style>
+</head>
+<body>
+<section id="homeScreen">
+  <div class="top"><h1>나의 법령집</h1><button class="btn" id="addBtn">＋ 법령 추가</button></div>
+  <div class="wrap">
+    <div class="grid" id="lawGrid"></div>
+    <div class="empty" id="empty" hidden>등록된 법령이 없습니다.</div>
+  </div>
+</section>
+
+<section id="viewerScreen">
+  <div class="top">
+    <button class="btn icon" id="homeBtn">⌂ 홈</button>
+    <div class="viewerbar" style="flex:1">
+      <strong id="viewerTitle"></strong>
+      <input id="searchInput" type="search" placeholder="키워드 검색">
+      <button class="btn icon" id="prevHit">‹</button>
+      <button class="btn icon" id="nextHit">›</button>
+      <span class="status" id="searchStatus"></span>
+    </div>
+  </div>
+  <div id="pdfWrap"><div class="empty">PDF 불러오는 중…</div></div>
+</section>
+
+<dialog id="lawDialog">
+<form method="dialog" class="dlg" id="lawForm">
+<h2 id="dlgTitle">법령 추가</h2>
+<input type="hidden" id="editId">
+<label>법령 이름</label><input id="lawName" required placeholder="예: 민법">
+<label id="fileLabel">PDF 파일</label><input id="lawFile" type="file" accept="application/pdf">
+<div class="dlgBtns"><button class="btn" value="cancel">취소</button><button class="btn primary" id="saveBtn" value="default">저장</button></div>
+</form>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+<script type="module">
+const seedLaws = [{"id": "seed-1", "name": "행정절차법", "src": "행정절차법.pdf", "seed": true}, {"id": "seed-2", "name": "행정심판법", "src": "행정심판법.pdf", "seed": true}, {"id": "seed-3", "name": "행정소송법", "src": "행정소송법.pdf", "seed": true}, {"id": "seed-4", "name": "행정대집행법", "src": "행정대집행법.pdf", "seed": true}, {"id": "seed-5", "name": "행정기본법", "src": "행정기본법.pdf", "seed": true}, {"id": "seed-6", "name": "행정규제기본법", "src": "행정규제기본법.pdf", "seed": true}, {"id": "seed-7", "name": "형법", "src": "형법.pdf", "seed": true}, {"id": "seed-8", "name": "형사소송법", "src": "형사소송법.pdf", "seed": true}];
+const DB='lawbook-db', STORE='laws';
+let db, laws=[], current=null, pdfDoc=null, hits=[], hitIndex=-1;
+
+function openDB(){
+ return new Promise((resolve,reject)=>{
+   const r=indexedDB.open(DB,1);
+   r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE,{keyPath:'id'}) };
+   r.onsuccess=()=>resolve(r.result); r.onerror=()=>reject(r.error);
+ });
+}
+async function getAllCustom(){return new Promise((res,rej)=>{const r=db.transaction(STORE).objectStore(STORE).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function putLaw(v){return new Promise((res,rej)=>{const r=db.transaction(STORE,'readwrite').objectStore(STORE).put(v);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
+async function delLaw(id){return new Promise((res,rej)=>{const r=db.transaction(STORE,'readwrite').objectStore(STORE).delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
+
+function render(){
+ const g=document.getElementById('lawGrid'); g.innerHTML='';
+ laws.forEach(l=>{
+   const c=document.createElement('article'); c.className='card';
+   c.innerHTML=`<div class="lawIcon">法</div><div class="name"></div><div class="cardActions"><button class="btn open">읽기</button><button class="btn edit">수정</button><button class="btn danger del">삭제</button></div>`;
+   c.querySelector('.name').textContent=l.name;
+   c.querySelector('.open').addEventListener('click',()=>openLaw(l));
+   c.querySelector('.edit').addEventListener('click',()=>editLaw(l));
+   c.querySelector('.del').addEventListener('click',()=>removeLaw(l));
+   g.appendChild(c);
+ });
+ document.getElementById('empty').hidden=laws.length>0;
+}
+function editLaw(l){
+ document.getElementById('dlgTitle').textContent='법령 수정';
+ document.getElementById('editId').value=l.id;
+ document.getElementById('lawName').value=l.name;
+ document.getElementById('lawFile').value='';
+ document.getElementById('fileLabel').textContent='PDF 파일 (바꾸려면 선택)';
+ document.getElementById('lawDialog').showModal();
+}
+async function removeLaw(l){
+ if(!confirm(`"${l.name}"을 삭제할까요?`))return;
+ if(l.seed){
+   localStorage.setItem('deleted-seeds', JSON.stringify([...(JSON.parse(localStorage.getItem('deleted-seeds')||'[]')), l.id]));
+ }else await delLaw(l.id);
+ await reloadLaws();
+}
+async function reloadLaws(){
+ const deleted=new Set(JSON.parse(localStorage.getItem('deleted-seeds')||'[]'));
+ const custom=await getAllCustom();
+ const seed=seedLaws.filter(x=>!deleted.has(x.id));
+ laws=[...seed,...custom]; render();
+}
+async function fileToArrayBuffer(file){return await file.arrayBuffer()}
+async function resolvePdf(l){
+ if(l.src) return l.src;
+ if(l.data) return {data:new Uint8Array(l.data)};
+ throw new Error('PDF 데이터 없음');
+}
+async function openLaw(l){
+ current=l; document.getElementById('viewerTitle').textContent=l.name;
+ document.getElementById('homeScreen').style.display='none';
+ document.getElementById('viewerScreen').style.display='block';
+ document.getElementById('searchInput').value=''; hits=[];hitIndex=-1;updateStatus();
+ const wrap=document.getElementById('pdfWrap'); wrap.innerHTML='<div class="empty">PDF 불러오는 중…</div>';
+ try{
+   const pdfjsLib=await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs');
+   pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs';
+   pdfDoc=await pdfjsLib.getDocument(await resolvePdf(l)).promise;
+   wrap.innerHTML='';
+   for(let n=1;n<=pdfDoc.numPages;n++) await renderPage(pdfjsLib,n);
+ }catch(e){wrap.innerHTML=`<div class="empty">PDF를 열 수 없습니다.<br><small>${e.message}</small></div>`}
+}
+async function renderPage(pdfjsLib,n){
+ const page=await pdfDoc.getPage(n);
+ const viewport=page.getViewport({scale:1.55});
+ const box=document.createElement('div');box.className='page';box.dataset.page=n;box.style.maxWidth=viewport.width+'px';
+ const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');
+ canvas.width=viewport.width; canvas.height=viewport.height; box.appendChild(canvas);
+ const layer=document.createElement('div');layer.className='textLayer';box.appendChild(layer);
+ document.getElementById('pdfWrap').appendChild(box);
+ await page.render({canvasContext:ctx,viewport}).promise;
+ const text=await page.getTextContent();
+ for(const item of text.items){
+   if(!item.str)continue;
+   const tx=pdfjsLib.Util.transform(viewport.transform,item.transform);
+   const span=document.createElement('span');
+   span.textContent=item.str; span.dataset.text=item.str.toLowerCase();
+   span.style.left=tx[4]+'px'; span.style.top=(tx[5]-item.height*viewport.scale)+'px';
+   span.style.fontSize=(item.height*viewport.scale)+'px';
+   span.style.transform=`scaleX(${Math.max(.25,(item.width*viewport.scale)/(Math.max(1,item.str.length)*(item.height*viewport.scale)*.52))})`;
+   layer.appendChild(span);
+ }
+}
+function doSearch(){
+ const q=document.getElementById('searchInput').value.trim().toLowerCase();
+ hits=[];hitIndex=-1;
+ document.querySelectorAll('.textLayer span').forEach(s=>{s.classList.remove('hit','current'); if(q&&s.dataset.text.includes(q)){s.classList.add('hit');hits.push(s)}});
+ if(hits.length){hitIndex=0;gotoHit()} else updateStatus();
+}
+function gotoHit(){
+ document.querySelectorAll('.current').forEach(x=>x.classList.remove('current'));
+ if(!hits.length){updateStatus();return}
+ hits[hitIndex].classList.add('current'); hits[hitIndex].scrollIntoView({behavior:'smooth',block:'center'});updateStatus();
+}
+function updateStatus(){document.getElementById('searchStatus').textContent=hits.length?`${hitIndex+1}/${hits.length}`:''}
+document.getElementById('searchInput').addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(doSearch,250)});
+document.getElementById('nextHit').addEventListener('click',()=>{if(hits.length){hitIndex=(hitIndex+1)%hits.length;gotoHit()}});
+document.getElementById('prevHit').addEventListener('click',()=>{if(hits.length){hitIndex=(hitIndex-1+hits.length)%hits.length;gotoHit()}});
+document.getElementById('homeBtn').addEventListener('click',()=>{document.getElementById('viewerScreen').style.display='none';document.getElementById('homeScreen').style.display='block';pdfDoc=null});
+document.getElementById('addBtn').addEventListener('click',()=>{document.getElementById('dlgTitle').textContent='법령 추가';document.getElementById('editId').value='';document.getElementById('lawName').value='';document.getElementById('lawFile').value='';document.getElementById('fileLabel').textContent='PDF 파일';document.getElementById('lawDialog').showModal()});
+document.getElementById('saveBtn').addEventListener('click',async e=>{
+ e.preventDefault();
+ const name=document.getElementById('lawName').value.trim(), file=document.getElementById('lawFile').files[0], id=document.getElementById('editId').value;
+ if(!name)return alert('법령 이름을 입력하세요.');
+ if(id){
+   const old=laws.find(x=>x.id===id);
+   if(old.seed && !file){
+     // seed rename -> hide original and create custom pointing to same src
+     const deleted=new Set(JSON.parse(localStorage.getItem('deleted-seeds')||'[]'));deleted.add(old.id);localStorage.setItem('deleted-seeds',JSON.stringify([...deleted]));
+     await putLaw({id:'custom-'+Date.now(),name,src:old.src,seed:false,linkedSeed:true});
+   }else{
+     const v={...old,name,seed:false};
+     if(file){v.data=await fileToArrayBuffer(file);delete v.src}
+     await putLaw(v);
+   }
+ }else{
+   if(!file)return alert('PDF 파일을 선택하세요.');
+   await putLaw({id:'custom-'+Date.now(),name,data:await fileToArrayBuffer(file),seed:false});
+ }
+ document.getElementById('lawDialog').close(); await reloadLaws();
+});
+db=await openDB(); await reloadLaws();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+</script>
+</body>
+</html>

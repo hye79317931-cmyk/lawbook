@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#17324d"/>
+<rect x="116" y="92" width="280" height="328" rx="28" fill="#ffffff"/>
+<rect x="148" y="134" width="216" height="18" rx="9" fill="#17324d" opacity=".25"/>
+<rect x="148" y="178" width="216" height="18" rx="9" fill="#17324d" opacity=".25"/>
+<rect x="148" y="222" width="216" height="18" rx="9" fill="#17324d" opacity=".25"/>
+<text x="256" y="338" text-anchor="middle" font-size="104" font-weight="800" font-family="sans-serif" fill="#17324d">法</text>
+</svg>
