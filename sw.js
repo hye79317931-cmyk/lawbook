@@ -1,4 +1,4 @@
-const CACHE='lawbook-flat-v3';
+const CACHE='lawbook-flat-v4';
 const CORE=["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./행정절차법.pdf", "./행정심판법.pdf", "./행정소송법.pdf", "./행정대집행법.pdf", "./행정기본법.pdf", "./행정규제기본법.pdf", "./형법.pdf", "./형사소송법.pdf"];
 
 self.addEventListener('install', event => {

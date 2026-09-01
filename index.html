@@ -162,6 +162,14 @@ function gotoHit(){
  hits[hitIndex].classList.add('current'); hits[hitIndex].scrollIntoView({behavior:'smooth',block:'center'});updateStatus();
 }
 function updateStatus(){document.getElementById('searchStatus').textContent=hits.length?`${hitIndex+1}/${hits.length}`:''}
+document.getElementById('lawFile').addEventListener('change',e=>{
+  const file=e.target.files && e.target.files[0];
+  const isAdd=!document.getElementById('editId').value;
+  if(file && isAdd){
+    const name=file.name.replace(/\.pdf$/i,'');
+    document.getElementById('lawName').value=name;
+  }
+});
 document.getElementById('searchInput').addEventListener('input',()=>{clearTimeout(window.__st);window.__st=setTimeout(doSearch,250)});
 document.getElementById('nextHit').addEventListener('click',()=>{if(hits.length){hitIndex=(hitIndex+1)%hits.length;gotoHit()}});
 document.getElementById('prevHit').addEventListener('click',()=>{if(hits.length){hitIndex=(hitIndex-1+hits.length)%hits.length;gotoHit()}});
