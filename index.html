@@ -107,7 +107,9 @@ async function reloadLaws(){
  const deleted=new Set(JSON.parse(localStorage.getItem('deleted-seeds')||'[]'));
  const custom=await getAllCustom();
  const seed=seedLaws.filter(x=>!deleted.has(x.id));
- laws=[...seed,...custom]; render();
+ laws=[...seed,...custom].sort((a,b)=>
+  a.name.localeCompare(b.name,'ko',{sensitivity:'base',numeric:true})
+); render();
 }
 async function fileToArrayBuffer(file){return await file.arrayBuffer()}
 async function resolvePdf(l){
