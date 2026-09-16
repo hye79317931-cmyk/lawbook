@@ -22,6 +22,8 @@ button,input{font:inherit}.top{height:58px;background:var(--navy);color:#fff;dis
 .empty{padding:40px 10px;text-align:center;color:var(--muted)}
 dialog{border:0;border-radius:16px;padding:0;max-width:420px;width:calc(100% - 28px)}dialog::backdrop{background:rgba(0,0,0,.35)}.dlg{padding:18px}.dlg h2{margin:0 0 14px;font-size:20px}.dlg label{display:block;font-size:13px;color:var(--muted);margin:10px 0 5px}.dlg input{width:100%;height:44px;border:1px solid var(--line);border-radius:10px;padding:0 10px}.dlgBtns{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 .status{font-size:12px;color:#dbe6f0;min-width:54px;text-align:center}
+.convertStatus{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:#f7f9fb;color:var(--muted);font-size:13px;line-height:1.4}
+.page.searchPageHit{outline:4px solid #ff9f43;outline-offset:2px}
 @media(max-width:560px){.wrap{padding:12px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.top{height:auto;min-height:58px}.viewerbar{width:100%}.viewerbar input{order:5;flex-basis:100%}}
 </style>
 </head>
@@ -53,7 +55,7 @@ dialog{border:0;border-radius:16px;padding:0;max-width:420px;width:calc(100% - 2
 <h2 id="dlgTitle">법령 추가</h2>
 <input type="hidden" id="editId">
 <label>법령 이름</label><input id="lawName" required placeholder="예: 민법">
-<label id="fileLabel">PDF 파일</label><input id="lawFile" type="file" accept="application/pdf">
+<label id="fileLabel">PDF / HWP / HWPX 파일</label><input id="lawFile" type="file" accept=".pdf,.hwp,.hwpx,application/pdf,application/x-hwp,application/haansofthwp"><div id="convertStatus" class="convertStatus" hidden></div>
 <div class="dlgBtns"><button class="btn" type="button" id="cancelBtn">취소</button><button class="btn primary" type="button" id="saveBtn">저장</button></div>
 </form>
 </dialog>
@@ -93,7 +95,8 @@ function editLaw(l){
  document.getElementById('editId').value=l.id;
  document.getElementById('lawName').value=l.name;
  document.getElementById('lawFile').value='';
- document.getElementById('fileLabel').textContent='PDF 파일 (바꾸려면 선택)';
+ setConvertStatus('',false);
+ document.getElementById('fileLabel').textContent='PDF / HWP / HWPX 파일 (바꾸려면 선택)';
  document.getElementById('lawDialog').showModal();
 }
 async function removeLaw(l){
@@ -111,7 +114,127 @@ async function reloadLaws(){
   a.name.localeCompare(b.name,'ko',{sensitivity:'base',numeric:true})
 ); render();
 }
+
 async function fileToArrayBuffer(file){return await file.arrayBuffer()}
+
+const RHWP_MODULE='https://cdn.jsdelivr.net/npm/@rhwp/core@0.8.6/+esm';
+const RHWP_WASM='https://cdn.jsdelivr.net/npm/@rhwp/core@0.8.6/rhwp_bg.wasm';
+const PDFLIB_MODULE='https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm';
+let rhwpReady=null;
+
+function isHwpFile(file){
+  return !!file && /\.(hwp|hwpx)$/i.test(file.name);
+}
+function isPdfFile(file){
+  return !!file && /\.pdf$/i.test(file.name);
+}
+function setConvertStatus(msg='',show=false){
+  const el=document.getElementById('convertStatus');
+  el.textContent=msg;
+  el.hidden=!show;
+}
+function setSaveBusy(busy,msg=''){
+  const save=document.getElementById('saveBtn');
+  const cancel=document.getElementById('cancelBtn');
+  const file=document.getElementById('lawFile');
+  save.disabled=busy; cancel.disabled=busy; file.disabled=busy;
+  save.textContent=busy?'변환 중…':'저장';
+  if(busy)setConvertStatus(msg||'HWP를 PDF로 변환하는 중…',true);
+}
+async function loadRhwp(){
+  if(rhwpReady)return rhwpReady;
+  rhwpReady=(async()=>{
+    let measureCtx=null,lastFont='';
+    globalThis.measureTextWidth=(font,text)=>{
+      if(!measureCtx)measureCtx=document.createElement('canvas').getContext('2d');
+      if(font!==lastFont){measureCtx.font=font||'16px sans-serif';lastFont=font}
+      return measureCtx.measureText(String(text??'')).width;
+    };
+    const mod=await import(RHWP_MODULE);
+    await mod.default({module_or_path:RHWP_WASM});
+    const pdfLib=await import(PDFLIB_MODULE);
+    return {HwpDocument:mod.HwpDocument,PDFDocument:pdfLib.PDFDocument};
+  })();
+  return rhwpReady;
+}
+function getSvgSize(svgText){
+  try{
+    const doc=new DOMParser().parseFromString(svgText,'image/svg+xml');
+    const svg=doc.documentElement;
+    const vb=(svg.getAttribute('viewBox')||'').trim().split(/\s+/).map(Number);
+    if(vb.length===4 && vb.every(Number.isFinite) && vb[2]>0 && vb[3]>0){
+      return {width:vb[2],height:vb[3],text:(svg.textContent||'').replace(/\s+/g,' ').trim()};
+    }
+    const w=parseFloat(svg.getAttribute('width'))||794;
+    const h=parseFloat(svg.getAttribute('height'))||1123;
+    return {width:w,height:h,text:(svg.textContent||'').replace(/\s+/g,' ').trim()};
+  }catch{
+    return {width:794,height:1123,text:''};
+  }
+}
+async function svgToJpeg(svgText,width,height){
+  const targetW=Math.min(1400,Math.max(1000,Math.round(width*1.5)));
+  const targetH=Math.max(1,Math.round(targetW*(height/width)));
+  const blob=new Blob([svgText],{type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  try{
+    const img=new Image();
+    img.decoding='async';
+    await new Promise((resolve,reject)=>{
+      img.onload=resolve; img.onerror=()=>reject(new Error('HWP 페이지 이미지를 만들 수 없습니다.'));
+      img.src=url;
+    });
+    const canvas=document.createElement('canvas');
+    canvas.width=targetW; canvas.height=targetH;
+    const ctx=canvas.getContext('2d',{alpha:false});
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,targetW,targetH);
+    ctx.drawImage(img,0,0,targetW,targetH);
+    const jpg=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('PDF 변환용 이미지를 만들 수 없습니다.')),'image/jpeg',0.92));
+    return new Uint8Array(await jpg.arrayBuffer());
+  }finally{
+    URL.revokeObjectURL(url);
+  }
+}
+async function convertHwpToPdf(file){
+  const {HwpDocument,PDFDocument}=await loadRhwp();
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  const doc=new HwpDocument(bytes);
+  const total=Number(doc.pageCount());
+  if(!Number.isFinite(total)||total<1)throw new Error('HWP 페이지를 읽지 못했습니다.');
+  const pdf=await PDFDocument.create();
+  const searchPages=[];
+  try{
+    for(let i=0;i<total;i++){
+      setConvertStatus(`HWP → PDF 변환 중… ${i+1}/${total} 페이지`,true);
+      await new Promise(r=>setTimeout(r,0));
+      const svgText=doc.renderPageSvg(i);
+      const info=getSvgSize(svgText);
+      searchPages.push(info.text);
+      const jpgBytes=await svgToJpeg(svgText,info.width,info.height);
+      const jpg=await pdf.embedJpg(jpgBytes);
+      const pageW=595.28;
+      const pageH=pageW*(info.height/info.width);
+      const page=pdf.addPage([pageW,pageH]);
+      page.drawImage(jpg,{x:0,y:0,width:pageW,height:pageH});
+    }
+    setConvertStatus('PDF 저장 준비 중…',true);
+    const pdfBytes=await pdf.save({useObjectStreams:true});
+    return {data:pdfBytes.buffer.slice(pdfBytes.byteOffset,pdfBytes.byteOffset+pdfBytes.byteLength),searchPages};
+  }finally{
+    if(doc && typeof doc.free==='function'){try{doc.free()}catch{}}
+  }
+}
+async function prepareFileData(file){
+  if(isPdfFile(file)){
+    return {data:await file.arrayBuffer(),searchPages:null,sourceType:'pdf'};
+  }
+  if(isHwpFile(file)){
+    const converted=await convertHwpToPdf(file);
+    return {...converted,sourceType:/\.hwpx$/i.test(file.name)?'hwpx':'hwp'};
+  }
+  throw new Error('PDF, HWP 또는 HWPX 파일만 선택할 수 있습니다.');
+}
+
 async function resolvePdf(l){
  if(l.src) return l.src;
  if(l.data) return {data:new Uint8Array(l.data)};
@@ -155,20 +278,42 @@ async function renderPage(pdfjsLib,n){
 function doSearch(){
  const q=document.getElementById('searchInput').value.trim().toLowerCase();
  hits=[];hitIndex=-1;
- document.querySelectorAll('.textLayer span').forEach(s=>{s.classList.remove('hit','current'); if(q&&s.dataset.text.includes(q)){s.classList.add('hit');hits.push(s)}});
+ document.querySelectorAll('.textLayer span').forEach(s=>s.classList.remove('hit','current'));
+ document.querySelectorAll('.page.searchPageHit').forEach(p=>p.classList.remove('searchPageHit'));
+ if(!q){updateStatus();return}
+ if(current && Array.isArray(current.searchPages) && current.searchPages.length){
+   current.searchPages.forEach((text,i)=>{
+     const hay=String(text||'').toLowerCase();
+     let pos=0;
+     while((pos=hay.indexOf(q,pos))!==-1){
+       const page=document.querySelector(`.page[data-page="${i+1}"]`);
+       if(page)hits.push({kind:'page',el:page,page:i+1});
+       pos+=Math.max(1,q.length);
+     }
+   });
+ }else{
+   document.querySelectorAll('.textLayer span').forEach(s=>{
+     if(s.dataset.text.includes(q)){s.classList.add('hit');hits.push({kind:'span',el:s})}
+   });
+ }
  if(hits.length){hitIndex=0;gotoHit()} else updateStatus();
 }
 function gotoHit(){
  document.querySelectorAll('.current').forEach(x=>x.classList.remove('current'));
+ document.querySelectorAll('.page.searchPageHit').forEach(p=>p.classList.remove('searchPageHit'));
  if(!hits.length){updateStatus();return}
- hits[hitIndex].classList.add('current'); hits[hitIndex].scrollIntoView({behavior:'smooth',block:'center'});updateStatus();
+ const hit=hits[hitIndex];
+ if(hit.kind==='page')hit.el.classList.add('searchPageHit');
+ else hit.el.classList.add('current');
+ hit.el.scrollIntoView({behavior:'smooth',block:'center'});
+ updateStatus();
 }
 function updateStatus(){document.getElementById('searchStatus').textContent=hits.length?`${hitIndex+1}/${hits.length}`:''}
 document.getElementById('lawFile').addEventListener('change',e=>{
   const file=e.target.files && e.target.files[0];
   const isAdd=!document.getElementById('editId').value;
   if(file && isAdd){
-    const name=file.name.replace(/\.pdf$/i,'');
+    const name=file.name.replace(/\.(pdf|hwp|hwpx)$/i,'');
     document.getElementById('lawName').value=name;
   }
 });
@@ -188,27 +333,54 @@ lawDialog.addEventListener('cancel',e=>{
   document.getElementById('lawForm').reset();
   document.getElementById('editId').value='';
 });
-document.getElementById('addBtn').addEventListener('click',()=>{document.getElementById('dlgTitle').textContent='법령 추가';document.getElementById('editId').value='';document.getElementById('lawName').value='';document.getElementById('lawFile').value='';document.getElementById('fileLabel').textContent='PDF 파일';document.getElementById('lawDialog').showModal()});
+document.getElementById('addBtn').addEventListener('click',()=>{setConvertStatus('',false);document.getElementById('dlgTitle').textContent='법령 추가';document.getElementById('editId').value='';document.getElementById('lawName').value='';document.getElementById('lawFile').value='';document.getElementById('fileLabel').textContent='PDF / HWP / HWPX 파일';document.getElementById('lawDialog').showModal()});
 document.getElementById('saveBtn').addEventListener('click',async e=>{
  e.preventDefault();
  const name=document.getElementById('lawName').value.trim(), file=document.getElementById('lawFile').files[0], id=document.getElementById('editId').value;
  if(!name)return alert('법령 이름을 입력하세요.');
- if(id){
-   const old=laws.find(x=>x.id===id);
-   if(old.seed && !file){
-     // seed rename -> hide original and create custom pointing to same src
-     const deleted=new Set(JSON.parse(localStorage.getItem('deleted-seeds')||'[]'));deleted.add(old.id);localStorage.setItem('deleted-seeds',JSON.stringify([...deleted]));
-     await putLaw({id:'custom-'+Date.now(),name,src:old.src,seed:false,linkedSeed:true});
-   }else{
-     const v={...old,name,seed:false};
-     if(file){v.data=await fileToArrayBuffer(file);delete v.src}
-     await putLaw(v);
+ if(!id && !file)return alert('PDF, HWP 또는 HWPX 파일을 선택하세요.');
+ try{
+   let prepared=null;
+   if(file){
+     if(!isPdfFile(file) && !isHwpFile(file))return alert('PDF, HWP 또는 HWPX 파일만 선택할 수 있습니다.');
+     setSaveBusy(true,isHwpFile(file)?'HWP를 PDF로 변환할 준비 중…':'파일 저장 준비 중…');
+     prepared=await prepareFileData(file);
    }
- }else{
-   if(!file)return alert('PDF 파일을 선택하세요.');
-   await putLaw({id:'custom-'+Date.now(),name,data:await fileToArrayBuffer(file),seed:false});
+   if(id){
+     const old=laws.find(x=>x.id===id);
+     if(old.seed && !file){
+       const deleted=new Set(JSON.parse(localStorage.getItem('deleted-seeds')||'[]'));deleted.add(old.id);localStorage.setItem('deleted-seeds',JSON.stringify([...deleted]));
+       await putLaw({id:'custom-'+Date.now(),name,src:old.src,seed:false,linkedSeed:true});
+     }else{
+       const v={...old,name,seed:false};
+       if(prepared){
+         v.data=prepared.data;
+         v.sourceType=prepared.sourceType;
+         if(prepared.searchPages)v.searchPages=prepared.searchPages; else delete v.searchPages;
+         delete v.src;
+       }
+       await putLaw(v);
+     }
+   }else{
+     await putLaw({
+       id:'custom-'+Date.now(),
+       name,
+       data:prepared.data,
+       searchPages:prepared.searchPages||undefined,
+       sourceType:prepared.sourceType,
+       seed:false
+     });
+   }
+   setConvertStatus('',false);
+   lawDialog.close();
+   await reloadLaws();
+ }catch(err){
+   console.error(err);
+   setConvertStatus(`변환 실패: ${err?.message||err}`,true);
+   alert(`파일을 추가하지 못했습니다.\n${err?.message||err}`);
+ }finally{
+   setSaveBusy(false);
  }
- lawDialog.close(); await reloadLaws();
 });
 db=await openDB(); await reloadLaws();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(()=>{});
